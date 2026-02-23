@@ -98,13 +98,13 @@
   - Google Sheets `Find Row`: `file_id` で回答行特定
   - Formatter: 名前/内容/金額正規化
   - Google Drive `Update File`: 短縮名へ変更
-  - Notion `Search Database Item`: `Title` 一致検索
-  - Filter: 検索結果0件のみ続行
+  - Google Sheets `Lookup Row`: `processing_log.reception_id` で重複確認
+  - Filter: 該当なし（未処理）のみ続行
   - Notion `Create Database Item`: `Title = 人の名前さん_内容`
-  - Storage/シート記録: Zap 2への受け渡しデータ保存
+  - Google Sheets `Create Row`（`zap_handoff`）: Zap 2への受け渡しデータ保存
 
 ### 7.2 Zap 2: 最終保管処理（添付あり）
-- Trigger: Storage/シートの新規レコード（Zap 1完了データ）
+- Trigger: Google Sheets `New Spreadsheet Row`（`zap_handoff`）
 - Action:
   - Formatter: 詳細名生成
   - Google Drive `Find File`: フォルダB同名チェック
@@ -120,14 +120,14 @@
   - URLが空でない
 - Action:
   - Formatter: 名前/内容正規化
-  - Notion `Search Database Item`: `Title` 一致検索
-  - Filter: 検索結果0件のみ続行
+  - Google Sheets `Lookup Row`: `processing_log.reception_id` で重複確認
+  - Filter: 該当なし（未処理）のみ続行
   - Notion `Create Database Item`: `Title = 人の名前さん_内容`
   - ログ記録
 
 ## 8. 二重処理防止
 - 一意キーは `フォーム回答ID` を使用する。
-- Notion作成前に `Search Database Item + Filter` で重複確認する。
+- Notion作成前に `processing_log.reception_id` を参照して重複確認する。
 - 既存時はNotion作成をスキップし、ログステータスを `duplicate` とする。
 - Zap 2は `file_id` を基準に再実行安全（idempotent）を確保する。
 
@@ -142,6 +142,7 @@
 - ログステータス: `success` / `error` / `duplicate` / `needs_manual`
 
 ## 11. ログ仕様（スプレッドシート）
+- シート名: `processing_log`
 - 記録項目:
   - 処理日時
   - 受付ID（フォーム回答ID）
@@ -166,7 +167,8 @@
 - Zapier:
   - Trigger/Action接続アカウント
   - フィルタ正規表現
-  - Storage/シート連携設定
+  - 受け渡しシート名（`zap_handoff`）
+  - ログシート名（`processing_log`）
 
 ## 13. 受入試験仕様（最小）
 - テストデータ3件（PDF/画像混在）で確認する。

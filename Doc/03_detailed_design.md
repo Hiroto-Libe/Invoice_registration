@@ -25,6 +25,8 @@
 - Notion Database（Titleプロパティ必須）
 - Zapier
 - Googleスプレッドシート（フォーム回答シート + ログシート）
+  - 受け渡しシート: `zap_handoff`
+  - ログシート: `processing_log`
 
 ### 3.2 管理用ID
 - `FOLDER_A_ID`
@@ -75,16 +77,16 @@
 3. 回答行から `フォーム回答ID` を取得し `reception_id` とする
 4. 正規化手順を実施し `short_name` / `short_title` を生成
 5. Google Drive `Update File` で1回目リネーム
-6. Notion `Search Database Item`（`Title == short_title`）で重複チェック
-7. Filter: 検索0件のみ続行
+6. Google Sheets `Lookup Row`（`processing_log`）で `reception_id` の重複チェック
+7. Filter: 重複なしのみ続行
 8. Notion `Create Database Item`（`Title = short_title`）
-9. Zapier Storage/管理シートへ受け渡しデータ保存
+9. Google Sheets `Create Row`（`zap_handoff`）へ受け渡しデータ保存
    - 保存項目: `file_id`, `reception_id`, `name_norm`, `content_norm`, `amount_norm`, `invoice_date`, `notion_page_id`
 10. ログ記録
 
 ### 5.2 Zap 2（添付あり: 詳細名化 + フォルダB移動）
 - Trigger:
-  - Zapier Storage/管理シートの新規レコード（Zap 1完了データ）
+  - Google Sheets `New Spreadsheet Row`（`zap_handoff`）
 - Steps:
 1. 受け渡しデータから `detail_name` を生成
 2. Google Drive `Find File` でフォルダBの同名有無を確認
@@ -104,8 +106,8 @@
 - Steps:
 1. 回答行から `フォーム回答ID` を取得し `reception_id` とする
 2. 名前・内容を正規化し `short_title` を生成
-3. Notion `Search Database Item`（`Title == short_title`）で重複チェック
-4. Filter: 検索0件のみ続行
+3. Google Sheets `Lookup Row`（`processing_log`）で `reception_id` の重複チェック
+4. Filter: 重複なしのみ続行
 5. Notion `Create Database Item`（`Title = short_title`）
 6. ログ記録
 
@@ -119,7 +121,7 @@
 
 ## 7. 重複・再実行対策
 - `reception_id`（フォーム回答ID）を内部キーとして採用する。
-- Zap 1 / Zap URLともにNotion作成前に `Search + Filter` を必須化する。
+- Zap 1 / Zap URLともにNotion作成前に `processing_log` を参照した重複チェックを必須化する。
 - 同一 `reception_id` の再実行時は `duplicate` ログを記録し作成スキップする。
 - Zap 2は `file_id` 基準で再実行安全（idempotent）を確保する。
 
@@ -147,17 +149,17 @@
 - Googleスプレッドシート `processing_log` シート
 
 ### 10.2 ログ項目
-- 処理日時
-- reception_id（フォーム回答ID）
-- file_id
-- short_name
-- final_file_name
-- drive_url_a
-- drive_url_b
-- notion_page_id
-- zap_name（Zap 1 / Zap 2 / Zap URL）
-- result（success / error / duplicate / needs_manual）
-- error_message
+- `processed_at`
+- `reception_id`
+- `file_id`
+- `short_name`
+- `final_file_name`
+- `drive_url_a`
+- `drive_url_b`
+- `notion_page_id`
+- `zap_name`
+- `result`
+- `error_message`
 
 ## 11. テスト設計
 
@@ -179,7 +181,8 @@
 4. 同一ファイル名がフォルダBに既存の状態
 5. 同一回答の再送信（duplicate判定）
 
-## 12. 未確定事項
-- Zap 1からZap 2への受け渡し媒体（Storage or シート）
-- ログシート列名の最終確定
-- Notion重複判定キー（`Title` のみで十分か、将来 `reception_id` プロパティ追加するか）
+## 12. 決定事項
+- 受付IDは `フォーム回答ID` を使用する。
+- Zap 1→Zap 2 の受け渡しは `zap_handoff` シートを使用する。
+- ログシートは `processing_log`、列名は `10.2` の定義で固定する。
+- Notion重複判定は `processing_log.reception_id` を基準とする。
