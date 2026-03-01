@@ -1,8 +1,8 @@
 # Zapier設定手順書（擬似環境）
 
 ## 1. 目的
-- 本書は `Doc/02_specification.md` と `Doc/03_detailed_design.md` に基づく、Zapierの画面設定手順を示す。
-- 本運用では Notion には `Title` のみを記録する。
+- 本書は `Doc/02_specification.md` と `Doc/03_detailed_design.md` に基づく Zapier 設定手順を示す。
+- 本運用では Notion には `人の名前さん_内容`（Title）を記録する。
 
 ## 2. 事前準備
 
@@ -12,17 +12,17 @@
 - Zapier
 
 ### 2.2 Driveフォルダ
-- フォルダA: フォーム添付アップロード先
-- フォルダB: 最終保管先
+- フォルダA（受付）: `01_フォーム受付_未処理`
+- フォルダB（最終）: `02_請求書補完1_確定`
 - 任意: エラー隔離フォルダ
 
 ### 2.3 スプレッドシート
-- フォーム回答シート（Googleフォーム連携で自動作成）
-- `zap_handoff` シート（Zap 1 → Zap 2 受け渡し用）
-- `processing_log` シート（ログ用）
+- フォーム回答シート（フォーム連携で自動作成）
+- `zap_handoff`（Zap1→Zap2受け渡し）
+- `processing_log`（処理ログ）
 
 ### 2.4 シート列定義
-- `zap_handoff` 列:
+- `zap_handoff`:
   - `created_at`
   - `file_id`
   - `reception_id`
@@ -33,7 +33,7 @@
   - `short_name`
   - `detail_name_base`
   - `notion_page_id`
-- `processing_log` 列:
+- `processing_log`:
   - `processed_at`
   - `reception_id`
   - `file_id`
@@ -46,281 +46,185 @@
   - `result`
   - `error_message`
 
-## 3. 共通ルール
+## 3. 重要ルール
 
-### 3.1 文字列正規化
-1. 前後空白を除去
-2. 名前末尾が `さん` でなければ付与
-3. 内容の禁止文字 `\/:*?"<>|` を `-` に置換
-4. 内容を80文字目安で切り詰め
-5. 金額を数値のみへ変換
+### 3.1 文字列
+- 名前は最終的に `〜さん` 1回だけに正規化する。
+- 内容の禁止文字 `\\ / : * ? " < > |` は `-` へ置換する。
 
 ### 3.2 ファイル名
 - 短縮名: `人の名前さん_内容.拡張子`
-- 詳細名: `YYYYMMDD_人の名前さん_内容_金額.拡張子`
+- 詳細名: `YYYY/MM/DD_人の名前さん_内容_金額.拡張子`
 
 ### 3.3 一意キー
 - `reception_id = フォーム回答ID`
 
-## 4. Zap 1 設定（添付あり: 短縮名化 + Notion作成）
+## 4. Zap1 設定（受付→短縮名→受け渡し）
 
-### 4.1 Zap基本情報
-- Zap名: `Zap 1 - Rename Short + Create Notion`
+### 4.1 Zap名
+- `Zap 1 - Rename Short + Handoff`
 
 ### 4.2 Trigger
 1. App: Google Drive
 2. Event: `New File in Folder`
 3. Folder: フォルダA
-4. Test Trigger で `file_id` とファイル名が取得できることを確認
+4. Test で `ID` と `Original Filename` が取れることを確認
 
-### 4.3 Filter（誤トリガー防止）
-1. Step: `Filter by Zapier`
-2. 条件1: ファイル名が詳細名正規表現に一致しない  
-   - `^[0-9]{8}_.+_[0-9]+\.[A-Za-z0-9]+$` を除外
-3. 条件2: 拡張子が許可形式  
-   - `pdf, jpg, jpeg, png, heic`
+### 4.3 Filter（対象拡張子のみ）
+- `Original Filename` の末尾が以下のいずれか
+  - `.pdf`
+  - `.jpg`
+  - `.jpeg`
+  - `.png`
+  - `.heic`
 
-### 4.4 回答行特定
-1. App: Google Sheets
-2. Event: `Lookup Spreadsheet Row`
-3. Spreadsheet: フォーム回答シートを含むファイル
-4. Worksheet: フォーム回答シート
-5. Lookup Column: 添付URL列
-6. Lookup Value: Triggerで取得した `file_id`
-7. 成功時に以下が取得できることを確認
-   - `フォーム回答ID`
-   - 請求日
-   - 名前
-   - 内容
-   - 金額
+### 4.4 回答行特定（Lookup Spreadsheet Row）
+1. Worksheet: フォーム回答シート
+2. Lookup column: 添付URL列（または補助列 `file_id_for_zap`）
+3. Lookup value: Trigger の `file_id`（またはID抽出値）
+4. 補助列を使う場合はフォーム回答シートに `file_id_for_zap` を用意する
 
-### 4.5 Formatter（正規化）
-1. 名前正規化（空白除去 + `さん` 付与）
-2. 内容正規化（禁止文字置換 + 80文字切り詰め）
-3. 金額正規化（数値のみ）
-4. 日付整形（`YYYY-MM-DD` -> `YYYYMMDD`）
-5. `short_title` と `short_name` を生成
-6. `detail_name_base` を生成
+### 4.5 正規化・短縮名生成
+- Formatter / Code で以下を作る
+  - `name_norm`
+  - `content_norm`
+  - `amount_norm`
+  - `short_name`
 
-### 4.6 1回目リネーム
+### 4.6 Driveリネーム（短縮名）
 1. App: Google Drive
-2. Event: `Update File`
-3. File: Triggerの `file_id`
+2. Event: `Update File or Folder Metadata`
+3. File: Trigger の `ID`（動的マッピング）
 4. Name: `short_name`
 
-### 4.7 重複チェック
-1. App: Google Sheets
-2. Event: `Lookup Spreadsheet Row`
-3. Worksheet: `processing_log`
-4. Lookup Column: `reception_id`
-5. Lookup Value: フォーム回答ID
-6. Step: `Filter by Zapier`
-7. 条件: 検索結果が空（未処理）の場合のみ続行
-
-### 4.8 Notion作成
-1. App: Notion
-2. Event: `Create Database Item`
-3. Database: 対象DB
-4. マッピング:
-   - `Title` = `short_title`
-
-### 4.9 zap_handoff書き込み
+### 4.7 `zap_handoff` 追記
 1. App: Google Sheets
 2. Event: `Create Spreadsheet Row`
 3. Worksheet: `zap_handoff`
-4. マッピング:
-   - `created_at` = Zap実行時刻
-   - `file_id`
-   - `reception_id`
-   - `invoice_date`
-   - `name_norm`
-   - `content_norm`
-   - `amount_norm`
-   - `short_name`
-   - `detail_name_base`
-   - `notion_page_id`
+4. マッピング
+  - `created_at`: Variables > System > Current time（ISO）
+  - `file_id`, `reception_id`, `invoice_date`, `name_norm`, `content_norm`, `amount_norm`, `short_name`
+  - `detail_name_base`: 空欄可（Zap2で生成する場合）
+  - `notion_page_id`: 空欄
 
-### 4.10 processing_log書き込み（成功時）
-1. App: Google Sheets
-2. Event: `Create Spreadsheet Row`
-3. Worksheet: `processing_log`
-4. マッピング:
-   - `processed_at` = Zap実行時刻
-   - `reception_id`
-   - `file_id`
-   - `short_name`
-   - `final_file_name` = 空
-   - `drive_url_a` = TriggerのファイルURL
-   - `drive_url_b` = 空
-   - `notion_page_id`
-   - `zap_name` = `Zap 1`
-   - `result` = `success`
-   - `error_message` = 空
+### 4.8 `processing_log` 追記（Zap1成功ログ）
+1. Worksheet: `processing_log`
+2. マッピング
+  - `processed_at`: Current time（ISO）
+  - `reception_id`, `file_id`, `short_name`
+  - `final_file_name`: 空欄
+  - `drive_url_a`: 取得できるDriveリンク
+  - `drive_url_b`: 空欄
+  - `notion_page_id`: 空欄
+  - `zap_name`: `Zap 1`（手入力可）
+  - `result`: `SUCCESS`
+  - `error_message`: 空欄
 
-## 5. Zap 2 設定（添付あり: 詳細名化 + フォルダB移動）
+## 5. Zap2 設定（Notion作成→詳細名→フォルダB移動）
 
-### 5.1 Zap基本情報
-- Zap名: `Zap 2 - Rename Detail + Move Final`
+### 5.1 Zap名
+- `Zap 2 - Notion + Rename Detail + Move Final`
 
 ### 5.2 Trigger
 1. App: Google Sheets
 2. Event: `New Spreadsheet Row`
 3. Worksheet: `zap_handoff`
+4. Test で1行取得を確認
 
-### 5.3 同名チェック
+### 5.3 Code by Zapier（詳細名とTitle生成）
+- Input Data
+  - `invoice_date = Trigger.invoice_date`
+  - `name_norm = Trigger.name_norm`
+  - `content_norm = Trigger.content_norm`
+  - `amount_norm = Trigger.amount_norm`
+  - `reception_id = Trigger.reception_id`
+  - `short_name = Trigger.short_name`
+- コード（確定版）
+
+```javascript
+const invoiceDate = (inputData.invoice_date || "").trim();
+const nameRaw = (inputData.name_norm || "").trim();
+const content = (inputData.content_norm || "").trim();
+const amount = String(inputData.amount_norm || "").trim();
+const receptionId = String(inputData.reception_id || "").trim();
+const shortName = (inputData.short_name || "").trim();
+
+const extMatch = shortName.match(/\.([A-Za-z0-9]+)$/);
+const ext = extMatch ? extMatch[1].toLowerCase() : "pdf";
+
+const nameBase = nameRaw.replace(/(?:さん)+$/u, "");
+const name = `${nameBase}さん`;
+
+const short_title = `${name}_${content}`;
+const detail_name = `${invoiceDate}_${name}_${content}_${amount}.${ext}`;
+const detail_name_with_id = `${invoiceDate}_${name}_${content}_${amount}_${receptionId}.${ext}`;
+
+output = { short_title, detail_name, detail_name_with_id, ext };
+```
+
+### 5.4 Notion作成（Name必須）
+1. App: Notion
+2. Event: `Create Data Source Item`
+3. Data Source: 対象DB（例: `タスク管理` など）
+4. **Name**: `Step2 -> Short Title` を必ず設定
+5. Content: 空欄可
+6. Content Format: `Plain text`
+
+> 注意: `Name` を設定しないと、Notion行は作成されてもタイトル空欄になる。
+
+### 5.5 Driveリネーム（詳細名）
 1. App: Google Drive
-2. Event: `Find File`
-3. Folder: フォルダB
-4. File Name: `detail_name_base`
-
-### 5.4 詳細名確定
-1. Step: `Formatter` または `Code by Zapier`
-2. ルール:
-   - 同名なし: `final_file_name = detail_name_base`
-   - 同名あり: `final_file_name = detail_name_base + "_" + reception_id`
-
-### 5.5 2回目リネーム
-1. App: Google Drive
-2. Event: `Update File`
-3. File: `file_id`
-4. Name: `final_file_name`
+2. Event: `Update File or Folder Metadata`
+3. File: `Trigger.file_id`（動的）
+4. Name: `Step2.detail_name`
 
 ### 5.6 フォルダB移動
 1. App: Google Drive
 2. Event: `Move File`
-3. File: `file_id`
-4. Destination Folder: フォルダB
+3. File: `Trigger.file_id`（動的）
+4. Folder: フォルダB
 
-### 5.7 processing_log書き込み（成功時）
+### 5.7 `processing_log` 追記（Zap2成功ログ）
 1. App: Google Sheets
 2. Event: `Create Spreadsheet Row`
 3. Worksheet: `processing_log`
-4. マッピング:
-   - `processed_at` = Zap実行時刻
-   - `reception_id`
-   - `file_id`
-   - `short_name`
-   - `final_file_name`
-   - `drive_url_a` = 空
-   - `drive_url_b` = 移動後ファイルURL
-   - `notion_page_id`
-   - `zap_name` = `Zap 2`
-   - `result` = `success`
-   - `error_message` = 空
+4. マッピング
+  - `processed_at`: Current time（ISO）
+  - `reception_id`: Trigger
+  - `file_id`: Trigger
+  - `short_name`: Trigger
+  - `final_file_name`: Step3/Step4 の最終Name
+  - `drive_url_a`: 空欄
+  - `drive_url_b`: 以下のどちらか
+    - Stepのリンク項目
+    - 文字列連結 `https://drive.google.com/open?id=` + `Trigger.file_id`
+  - `notion_page_id`: 空欄
+  - `zap_name`: `Zap 2`
+  - `result`: `SUCCESS`
+  - `error_message`: 空欄
 
-## 6. Zap URL 設定（添付なしURL提出）
+## 6. Notionが選択肢に出ない場合
+1. Zapier `App Connections` で Notion接続を新規作成/再接続
+2. 認可画面 `Allow access` で表示されるページにチェックして許可
+3. Stepを開き直し `Data Source` を `Refresh`
+4. それでも出ない場合は、認可画面で見えているDB（例: `タスク管理`）で先に接続確認し、後でDB整理する
 
-### 6.1 Zap基本情報
-- Zap名: `Zap URL - Create Notion Title Only`
+## 7. よくある詰まりどころ
+- `Move File` の `File` に候補が出ない
+  - Static選択ではなく、右の `+` から動的に `Trigger.file_id` を入れる
+- `Lookup Spreadsheet Row` が見つからない
+  - フォーム回答シートに補助列 `file_id_for_zap` を作ってID照合
+- `Current time` が見つからない
+  - `Variables` > `System` > `Current time: ... (ISO)` を使用
+- Notion追加されるが `Name` 空欄
+  - Stepの `Name` フィールドに `Short Title` を設定する
 
-### 6.2 Trigger
-1. App: Google Forms
-2. Event: `New Form Response`
+## 8. 最終テスト観点
+1. フォルダBに `YYYY/MM/DD_人の名前さん_内容_金額.拡張子` が存在
+2. Notionに `人の名前さん_内容` が追加
+3. `processing_log` に `zap_name = Zap 2`, `result = SUCCESS` が追加
 
-### 6.3 Filter
-1. 添付ファイルが空
-2. URLが空でない
-
-### 6.4 Formatter
-1. 名前正規化
-2. 内容正規化
-3. `short_title` 生成
-4. `reception_id` 取得（フォーム回答ID）
-
-### 6.5 重複チェック
-1. App: Google Sheets
-2. Event: `Lookup Spreadsheet Row`
-3. Worksheet: `processing_log`
-4. Lookup Column: `reception_id`
-5. Filter: 未処理のみ続行
-
-### 6.6 Notion作成
-1. App: Notion
-2. Event: `Create Database Item`
-3. Mapping:
-   - `Title` = `short_title`
-
-### 6.7 processing_log書き込み（成功時）
-1. App: Google Sheets
-2. Event: `Create Spreadsheet Row`
-3. Worksheet: `processing_log`
-4. マッピング:
-   - `processed_at` = Zap実行時刻
-   - `reception_id`
-   - `file_id` = 空
-   - `short_name` = `short_title`
-   - `final_file_name` = 空
-   - `drive_url_a` = 空
-   - `drive_url_b` = 空
-   - `notion_page_id`
-   - `zap_name` = `Zap URL`
-   - `result` = `success`
-   - `error_message` = 空
-
-## 7. エラー時の取り扱い
-- 各Zapの最終にエラーログ記録ステップを追加する。
-- `result = error` または `needs_manual` を記録する。
-- 必要に応じてDriveファイルをエラー隔離フォルダへ移動する。
-
-## 8. テスト手順
-1. 添付ありデータ1件で `Zap 1` と `Zap 2` を確認
-2. 添付なしURLありデータ1件で `Zap URL` を確認
-3. 同一回答IDで再送して `duplicate` 動作を確認
-4. 禁止文字/金額表記ゆれを含むデータで命名を確認
-
-## 9. 本番化前チェック
-1. 3つのZapが `ON` になっている
-2. 参照フォルダID・シート名・DBが本番値に置換済み
-3. `processing_log` に `error` が残っていない
-
-## 10. テスト用ダミーデータ
-
-### 10.1 添付あり（正常系）
-- 入力値:
-  - フォーム回答ID: `RESP-20260223-001`
-  - 請求日: `2026-02-23`
-  - 名前: `田中`
-  - 内容: `動画編集`
-  - 金額: `50,000円`
-  - 添付: `invoice_sample.pdf`
-  - URL: 空
-- 期待結果:
-  - 短縮名: `田中さん_動画編集.pdf`
-  - 詳細名: `20260223_田中さん_動画編集_50000.pdf`
-  - Notion Title: `田中さん_動画編集`
-  - `processing_log.result`: `success`
-
-### 10.2 添付なしURLあり（URL例外系）
-- 入力値:
-  - フォーム回答ID: `RESP-20260223-002`
-  - 請求日: `2026-02-23`
-  - 名前: `佐藤さん`
-  - 内容: `バナー制作`
-  - 金額: `12000`
-  - 添付: 空
-  - URL: `https://example.com/invoice/abc`
-- 期待結果:
-  - Notion Title: `佐藤さん_バナー制作`
-  - Driveリネーム/移動: 実行されない
-  - `processing_log.result`: `success`
-
-### 10.3 重複確認（duplicate）
-- 手順:
-  1. `10.1` を1回実行
-  2. 同じ `フォーム回答ID = RESP-20260223-001` で再実行
-- 期待結果:
-  - 2回目はNotion新規作成されない
-  - `processing_log.result`: `duplicate`
-
-### 10.4 禁止文字・長文確認（境界系）
-- 入力値:
-  - フォーム回答ID: `RESP-20260223-003`
-  - 請求日: `2026-02-23`
-  - 名前: `鈴木`
-  - 内容: `LP制作/デザイン:*?\"<>|_テストテキスト（80文字超になる長文を入力）`
-  - 金額: `12,345円`
-  - 添付: `sample_image.png`
-- 期待結果:
-  - 禁止文字が `-` に置換される
-  - 内容が80文字目安で切り詰められる
-  - 金額が `12345` として詳細名に反映される
+## 9. 公開前チェック
+1. Zap1 / Zap2 とも `Publish` 済みか
+2. Zap History で直近 Run が `Successful` か
+3. テスト用の重複行・空欄行を必要に応じて整理したか
